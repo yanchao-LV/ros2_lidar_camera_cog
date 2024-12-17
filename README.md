@@ -44,11 +44,19 @@ Please refer to the following link for colcon installation：
 Be sure to use the above command to clone the code to the local, otherwise it will compile error due to the file path problem.
 
 1. Use the following command to build livox_ros2_driver :
+	#### For ROS2 Foxy:
+	```bash
+	source /opt/ros/foxy/setup.sh
+	cd ws_livox
+	colcon build
+	```
 
-   ```bash
-   cd ws_livox
-   colcon build
-   ```
+	#### For ROS2 Humble:
+	```bash
+	source /opt/ros/humble/setup.sh
+	cd ws_livox
+	colcon build
+	```
 
 ***IMPORTANT :***
 
