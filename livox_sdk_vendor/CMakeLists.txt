@@ -14,17 +14,29 @@ macro(build_livox_sdk)
   endif()
 
   include(ExternalProject)
-  externalproject_add(livox-sdk-${livox_sdk_REV}
-    GIT_REPOSITORY https://github.com/Livox-SDK/Livox-SDK.git
-    GIT_TAG ${livox_sdk_REV}
-    GIT_SHALLOW OFF
-    TIMEOUT 60
-    CMAKE_ARGS
-      -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/livox-sdk_install
-      -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-      ${extra_cmake_args}
-  )
-
+  #externalproject_add(livox-sdk-${livox_sdk_REV}
+  #  GIT_REPOSITORY https://github.com/Livox-SDK/Livox-SDK.git
+  #  GIT_TAG ${livox_sdk_REV}
+  #  GIT_SHALLOW OFF
+  #  TIMEOUT 60
+  #  CMAKE_ARGS
+  #    -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/livox-sdk_install
+  #    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  #    ${extra_cmake_args}
+  #)
+# 修改为以下内容（关键部分）：
+externalproject_add(livox-sdk-${livox_sdk_REV}
+  SOURCE_DIR "/home/abc/ws_livox/src/Livox-SDK"
+  DOWNLOAD_COMMAND ""
+  UPDATE_COMMAND ""
+  PATCH_COMMAND ""
+  BUILD_COMMAND $(MAKE)  # 添加这行
+  TIMEOUT 60
+  CMAKE_ARGS
+    -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/livox-sdk_install
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    ${extra_cmake_args}
+)
   # The external project will install to the build folder, but we'll install that on make install.
   install(
     DIRECTORY
@@ -47,3 +59,4 @@ endif()
 install(DIRECTORY cmake DESTINATION share/${PROJECT_NAME})
 
 ament_package(CONFIG_EXTRAS livox_sdk_vendor-extras.cmake)
+
