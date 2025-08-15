@@ -193,51 +193,53 @@ private:
   }
 
   // 分析点云的曲率特征（判断是否包含球面部分）
-  bool analyzeCurvature(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster) {
-    // 计算法线
-    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
-    tree->setInputCloud(cluster);
-    ne.setInputCloud(cluster);
-    ne.setSearchMethod(tree);
-    ne.setRadiusSearch(0.05);  // 增加到5cm搜索半径（适应更大范围的曲率）
-    ne.compute(*normals);
-    
-    RCLCPP_INFO(this->get_logger(), "Normals computed: %zu", normals->size());
+bool analyzeCurvature(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster) {
+  // 计算法线
+  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+  pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+  tree->setInputCloud(cluster);
+  ne.setInputCloud(cluster);
+  ne.setSearchMethod(tree);
+  ne.setRadiusSearch(0.05);  // 搜索半径
+  ne.compute(*normals);
+  
+  RCLCPP_INFO(this->get_logger(), "Normals computed: %zu", normals->size());
 
-    // 计算主曲率（用于分析曲面形状）
-    pcl::PrincipalCurvaturesEstimation<pcl::PointXYZ, pcl::Normal, pcl::PrincipalCurvatures> pc;
-    pcl::PointCloud<pcl::PrincipalCurvatures>::Ptr curvatures(new pcl::PointCloud<pcl::PrincipalCurvatures>);
-    pc.setInputCloud(cluster);
-    pc.setInputNormals(normals);
-    pc.setSearchMethod(tree);
-    pc.setRadiusSearch(0.05);  // 增加到5cm搜索半径
-    pc.compute(*curvatures);
-    
-    RCLCPP_INFO(this->get_logger(), "Curvatures computed: %zu", curvatures->size());
+  // 计算主曲率
+  pcl::PrincipalCurvaturesEstimation<pcl::PointXYZ, pcl::Normal, pcl::PrincipalCurvatures> pc;
+  pcl::PointCloud<pcl::PrincipalCurvatures>::Ptr curvatures(new pcl::PointCloud<pcl::PrincipalCurvatures>);
+  pc.setInputCloud(cluster);
+  pc.setInputNormals(normals);
+  pc.setSearchMethod(tree);
+  pc.setRadiusSearch(0.05);
+  pc.compute(*curvatures);
+  
+  RCLCPP_INFO(this->get_logger(), "Curvatures computed: %zu", curvatures->size());
 
-    // 统计球面曲率点的比例
-    int spherical_points = 0;
-    int total_points = curvatures->size();
+  // 关键：在使用前声明变量（确保作用域覆盖日志输出行）
+  size_t spherical_points = 0;  // 声明为size_t
+  size_t total_points = curvatures->size();  // 声明为size_t
+  
+  for (size_t i = 0; i < total_points; i++) {
+    float curvature_diff = std::abs(curvatures->points[i].pc1 - curvatures->points[i].pc2);
+    float avg_curvature = (curvatures->points[i].pc1 + curvatures->points[i].pc2) / 2.0;
     
-    for (size_t i = 0; i < total_points; i++) {
-      float curvature_diff = std::abs(curvatures->points[i].pc1 - curvatures->points[i].pc2);
-      float avg_curvature = (curvatures->points[i].pc1 + curvatures->points[i].pc2) / 2.0;
-      
-      // 放宽条件
-      if (curvature_diff < 0.1 && avg_curvature > 0.05 && avg_curvature < 0.3) {
-        spherical_points++;
-      }
+    if (curvature_diff < 0.1 && avg_curvature > 0.05 && avg_curvature < 0.3) {
+      spherical_points++;
     }
-
-    float ratio = (total_points > 0) ? (float)spherical_points / total_points : 0.0;
-    RCLCPP_INFO(this->get_logger(), "Spherical points: %d/%d (%.2f%%)", 
-                spherical_points, total_points, ratio * 100);
-
-    // 降低阈值到30%的点具有球面曲率特征
-    return ratio > 0.3;
   }
+
+  // 计算比例（确保ratio在日志前定义）
+  float ratio = (total_points > 0) ? static_cast<float>(spherical_points) / total_points : 0.0f;
+  
+  // 修复日志占位符：%d改为%zu（匹配size_t）
+  RCLCPP_INFO(this->get_logger(), "Spherical points: %zu/%zu (%.2f%%)", 
+              spherical_points, total_points, ratio * 100);
+
+  return ratio > 0.3;
+}
+
 
   // 发布甘蓝包围框
   void publishBoundingBox(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster,
