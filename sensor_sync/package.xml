@@ -10,12 +10,12 @@
   <!-- 构建工具依赖 -->
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- 核心依赖（<depend>已包含编译和运行时，无需重复写<exec_depend>） -->
+  <!-- 运行和编译依赖 -->
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>message_filters</depend>
   <depend>livox_ros2_driver</depend>
-  <depend>livox_interfaces</depend>  <!-- 新增：依赖消息类型包 -->
+  <depend>livox_interfaces</depend>  <!-- 雷达消息类型依赖 -->
 
   <export>
     <build_type>ament_cmake</build_type>
