@@ -7,7 +7,11 @@
 
 using namespace message_filters;
 
-// 同步回调函数：处理匹配的图像和点云
+// 全局发布器指针（供回调函数使用）
+rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr sync_img_pub;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr sync_cloud_pub;
+
+// 同步回调函数：处理匹配的图像和点云并发布
 void sync_callback(
   const sensor_msgs::msg::Image::ConstSharedPtr& img_msg,
   const sensor_msgs::msg::PointCloud2::ConstSharedPtr& cloud_msg
@@ -25,6 +29,10 @@ void sync_callback(
     "  时间差: %.2f 毫秒",
     img_time, cloud_time, time_diff
   );
+
+  // 发布同步后的图像和点云
+  sync_img_pub->publish(*img_msg);
+  sync_cloud_pub->publish(*cloud_msg);
 }
 
 int main(int argc, char**argv) {
@@ -37,20 +45,24 @@ int main(int argc, char**argv) {
   rclcpp::QoS qos(10);  // 队列大小10
   qos.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);  // 可靠传输
   qos.durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);    // 易变数据（不缓存）
-  auto rmw_qos = qos.get_rmw_qos_profile();  // 转换为rmw类型的QoS（关键！）
+  auto rmw_qos = qos.get_rmw_qos_profile();  // 转换为rmw类型的QoS
+
+  // 初始化同步数据发布器（使用相同QoS配置）
+  sync_img_pub = node->create_publisher<sensor_msgs::msg::Image>("/sync/image", qos);
+  sync_cloud_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("/sync/point_cloud", qos);
 
   // 订阅相机图像话题（使用rmw类型QoS）
   Subscriber<sensor_msgs::msg::Image> img_sub(
     node, 
     "/image_raw", 
-    rmw_qos  // 第三个参数必须是rmw_qos_profile_t类型
+    rmw_qos
   );
 
   // 订阅转换后的点云话题（同样使用rmw类型QoS）
   Subscriber<sensor_msgs::msg::PointCloud2> cloud_sub(
     node, 
     "/livox/lidar_converted", 
-    rmw_qos  // 第三个参数必须是rmw_qos_profile_t类型
+    rmw_qos
   );
 
   // 定义同步策略：近似时间同步
