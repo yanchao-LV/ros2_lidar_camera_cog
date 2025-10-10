@@ -1,69 +1,94 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from vision_msgs.msg import BoundingBoxes, BoundingBox  # 新增：边界框消息类型
 from cv_bridge import CvBridge
 import cv2
-import os  # 用于路径处理
+import os
 from ultralytics import YOLO
 
 class ObjectDetectionNode(Node):
     def __init__(self):
         super().__init__('object_detection_node')
         
-        # 初始化CvBridge（用于ROS图像和OpenCV图像转换）
         self.bridge = CvBridge()
         
-        # 处理模型路径（展开~为用户主目录）
+        # 模型路径参数
         self.declare_parameter('model_path', '~/runs/train/yolov8n_cabbage/weights/best.pt')
         model_path = self.get_parameter('model_path').get_parameter_value().string_value
-        model_path = os.path.expanduser(model_path)  # 关键：将~转换为实际路径
+        model_path = os.path.expanduser(model_path)
         self.get_logger().info(f"加载模型路径: {model_path}")
-        
-        # 加载YOLOv8模型
         self.model = YOLO(model_path)
         
-        # 订阅相机图像话题（核心：必须有这部分才能接收图像）
+        # 订阅相机图像
         self.image_subscription = self.create_subscription(
             Image,
-            'image_raw',  # 与你的相机发布的话题名一致（从ros2 topic list确认）
-            self.image_callback,  # 收到图像后调用的函数
-            10  # 队列长度
+            'image_raw',
+            self.image_callback,
+            10
         )
-        self.image_subscription  # 防止未使用变量警告
+        
+        # 新增：发布边界框话题（供融合节点订阅）
+        self.bbox_publisher = self.create_publisher(
+            BoundingBoxes,  # 消息类型：多个边界框的集合
+            '/cabbage_detections_camera',  # 话题名（需与融合节点订阅的一致）
+            10
+        )
 
     def image_callback(self, msg):
-        """收到相机图像时的回调函数：处理图像并显示检测结果"""
-        self.get_logger().info("收到相机图像，开始检测...")  # 调试用：确认收到图像
+        self.get_logger().info("收到相机图像，开始检测...")
         try:
-            # 将ROS的Image消息转换为OpenCV格式（bgr8是常见的彩色图像格式）
             cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+            results = self.model(cv_image)  # YOLO检测结果
             
-            # 使用YOLOv8模型检测物体
-            results = self.model(cv_image)
+            # 新增：构建边界框消息
+            bboxes_msg = BoundingBoxes()
+            bboxes_msg.header = msg.header  # 复用图像的时间戳和帧ID（关键：用于时间同步）
+            bboxes_msg.header.frame_id = 'hik_camera'  # 相机坐标系ID（需与雷达坐标系校准）
             
-            # 可视化检测结果（在图像上画框和标签）
+            # 遍历检测结果，提取甘蓝的边界框
+            for result in results:
+                for box in result.boxes:
+                    # 假设YOLO模型中甘蓝的类别名为'cabbage'（需与训练时一致）
+                    if result.names[int(box.cls)] == 'cabbage':
+                        # 构建单个边界框消息
+                        bbox = BoundingBox()
+                        bbox.class_id = 'cabbage'  # 类别名
+                        bbox.confidence = float(box.conf)  # 置信度
+                        
+                        # 边界框坐标（左上角x, y，右下角x, y）
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        bbox.xmin = int(x1)
+                        bbox.ymin = int(y1)
+                        bbox.xmax = int(x2)
+                        bbox.ymax = int(y2)
+                        
+                        bboxes_msg.bounding_boxes.append(bbox)  # 添加到集合中
+            
+            # 发布边界框消息
+            self.bbox_publisher.publish(bboxes_msg)
+            self.get_logger().info(f"发布{len(bboxes_msg.bounding_boxes)}个甘蓝边界框")
+            
+            # 可视化检测结果（可选）
             annotated_frame = results[0].plot()
-            
-            # 显示检测后的图像
             cv2.imshow('Object Detection', annotated_frame)
-            cv2.waitKey(1)  # 必须调用，否则窗口无法刷新（1ms延迟）
+            cv2.waitKey(1)
             
         except Exception as e:
             self.get_logger().error(f"处理图像出错: {e}")
 
 def main(args=None):
-    rclpy.init(args=args)  # 初始化ROS 2
-    node = ObjectDetectionNode()  # 创建节点实例
+    rclpy.init(args=args)
+    node = ObjectDetectionNode()
     try:
-        rclpy.spin(node)  # 循环运行节点，等待回调
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        # 按下Ctrl+C时退出
         node.get_logger().info("用户中断，退出节点...")
     finally:
-        # 清理资源
         node.destroy_node()
         rclpy.shutdown()
-        cv2.destroyAllWindows()  # 关闭所有OpenCV窗口
+        cv2.destroyAllWindows()
 
 if __name__ == '__main__':
     main()
+
