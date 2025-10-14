@@ -8,15 +8,17 @@ cabbage_fusion_node:
     camera_z_min: 0.5   # 最小检测距离（米）
     camera_z_max: 5.0   # 最大检测距离（米）
 
-    # 掩码冗余（扩大视觉框范围，确保完全覆盖目标）
-    mask_margin_x: 0.05  # x方向冗余（米）
-    mask_margin_y: 0.05  # y方向冗余（米）
-    mask_margin_z: 0.05  # z方向冗余（米）
+    # 掩码冗余（扩大视觉框范围）
+    mask_margin_x: 0.05  # x方向冗余
+    mask_margin_y: 0.05  # y方向冗余
+    mask_margin_z: 0.05  # z方向冗余
 
-    # 激光检测复用参数（与lidar_cabbage_detection保持一致）
-    cluster_tolerance: 0.15  # 聚类距离阈值
-    min_cluster_size: 50     # 最小聚类点数
-    max_cluster_size: 2000   # 最大聚类点数
-    min_cabbage_radius: 0.08  # 最小甘蓝半径（米）
-    max_cabbage_radius: 0.5  # 最大甘蓝半径（米）
+    # DBSCAN聚类参数（适配倾斜和遮挡）
+    dbscan_eps: 0.1      # 基础邻域半径（米）
+    dbscan_min_samples: 15  # 最小聚类点数
+    sensor_tilt_angle: 65.0  # 传感器倾斜角（度）
+
+    # 甘蓝尺寸过滤
+    min_cabbage_size: 0.08  # 最小三维尺寸（米）
+    max_cabbage_size: 0.3   # 最大三维尺寸（米）
 
