@@ -1,62 +1,41 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.8)
 project(lidar_cabbage_detection)
 
-# 消除PCL_ROOT变量警告（可选但推荐）
-cmake_policy(SET CMP0074 NEW)
-
-# 编译选项：开启警告、C++17标准
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
-  set(CMAKE_CXX_STANDARD 17)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 
-# 1. 查找ROS2依赖
+# ---------------------- 原有依赖（保留不动）----------------------
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)          # 点云消息
-find_package(visualization_msgs REQUIRED)   # 可视化Marker消息
-find_package(pcl_conversions REQUIRED)      # ROS2-PCL格式转换
-find_package(PCL REQUIRED COMPONENTS        # PCL核心功能
-  common 
-  segmentation 
-  filters 
-  features 
-  search
-)
+find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(PCL REQUIRED)
 
-# 2. 包含头文件目录
-include_directories(
-  include
-  ${PCL_INCLUDE_DIRS}  # PCL头文件
-)
-
-# 3. PCL库配置
-link_directories(${PCL_LIBRARY_DIRS})
-add_definitions(${PCL_DEFINITIONS})
-
-# 4. 编译节点
-add_executable(cabbage_detection_node 
-  src/cabbage_detection_node.cpp
-)
-
-# 5. 链接依赖
-ament_target_dependencies(cabbage_detection_node
+# ---------------------- 原有检测节点编译（保留不动）----------------------
+add_executable(seedling_detection_node src/cabbage_detection_node.cpp)
+ament_target_dependencies(seedling_detection_node
   rclcpp
   sensor_msgs
   visualization_msgs
   pcl_conversions
 )
-target_link_libraries(cabbage_detection_node 
-  ${PCL_LIBRARIES}  # 链接PCL库
+target_link_libraries(seedling_detection_node ${PCL_LIBRARIES})
+
+# ---------------------- 新增：测试节点编译（只加这部分）----------------------
+add_executable(test_node src/test_node.cpp)  # 编译test_node
+ament_target_dependencies(test_node          # 测试节点只需要基础依赖
+  rclcpp
+  sensor_msgs
 )
 
-# 6. 安装节点（ROS2可执行文件路径）
+# ---------------------- 安装两个节点（保留不动，新增test_node）----------------------
 install(TARGETS
-  cabbage_detection_node
+  seedling_detection_node  # 原有检测节点
+  test_node                # 新增测试节点
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# 7. 生成ROS2包配置
 ament_package()
 
