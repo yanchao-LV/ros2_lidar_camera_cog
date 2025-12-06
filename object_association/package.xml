@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>object_association</name>
+  <version>0.0.0</version>
+  <description>纯Python实现：视觉-点云框关联+漏检补充</description>
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- 核心依赖（纯Python包必须的依赖） -->
+  <buildtool_depend>ament_cmake</buildtool_depend>  <!-- 基础构建工具 -->
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <!-- Python第三方库（无需ROS编译，pip安装即可） -->
+  <exec_depend>numpy</exec_depend>
+  <exec_depend>opencv-python</exec_depend>
+  <exec_depend>scipy</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <!-- 关键修正：纯Python包的build_type是 ament_python（不是ament_cmake_python） -->
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+

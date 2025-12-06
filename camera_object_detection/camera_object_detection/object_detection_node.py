@@ -14,6 +14,9 @@ class ObjectDetectionNode(Node):
         self.bbox_data_pub = self.create_publisher(String, '/cabbage_sprouts_bbox_data', 10)
         self.overlay_pub = self.create_publisher(Image, '/image_with_overlay', 10)
         
+        # 【新增：中心线坐标发布器（仅用于点云过滤）】
+        self.center_line_pub = self.create_publisher(String, '/cabbage_center_line', 10)
+        
         self.distance_sub = self.create_subscription(
             String, 
             '/cabbage_sprouts_with_distance', 
@@ -25,13 +28,11 @@ class ObjectDetectionNode(Node):
         self.model = YOLO("/home/abc/runs/train/yolov8n_cabbage_sprouts2/weights/best.pt")
         self.get_logger().info("✅ 视觉节点（支持距离+三维坐标显示）启动成功")
         
-        # 【核心修改1：存储距离+三维坐标（key：(cx_int, cy_int)，value：(dist, X, Y, Z)）】
         self.latest_dist_xyz = {}
-        self.match_threshold = 10  # 宽松匹配阈值（不变）
+        self.match_threshold = 10
         self.print_interval = 5
         self.frame_count = 0
 
-    # 【核心修改2：解析新增的三维坐标字段】
     def distance_cb(self, msg):
         try:
             dist_xyz_dict = {}
@@ -40,18 +41,15 @@ class ObjectDetectionNode(Node):
                 target = target.strip()
                 if not target:
                     continue
-                # 解析 8 个字段：cx,cy,width,height,distance,X,Y,Z
                 parts = list(map(float, target.split(',')))
                 if len(parts) != 8:
                     self.get_logger().warn(f"⚠️  数据格式错误（应为8个字段）：{target}")
                     continue
                 cx_pixel, cy_pixel, _, _, distance, x, y, z = parts
-                # 整数坐标作为key，存储（距离，X，Y，Z）
                 key = (round(cx_pixel), round(cy_pixel))
                 dist_xyz_dict[key] = (distance, x, y, z)
             self.latest_dist_xyz = dist_xyz_dict
             
-            # 打印日志（每5帧一次）
             self.frame_count += 1
             if self.frame_count % self.print_interval == 0:
                 self.get_logger().info(f"📥 距离+坐标数据：{list(dist_xyz_dict.items())}")
@@ -59,13 +57,11 @@ class ObjectDetectionNode(Node):
             self.get_logger().error(f"❌ 数据解析失败：{str(e)}")
             self.latest_dist_xyz = {}
 
-    # 【核心修改3：匹配时返回距离+三维坐标】
     def find_matching_dist_xyz(self, bbox_cx, bbox_cy):
         min_dist_pixel = float('inf')
-        matched_data = None  # (distance, X, Y, Z)
+        matched_data = None
         for (dist_cx, dist_cy), (dist, x, y, z) in self.latest_dist_xyz.items():
-            # 计算像素距离
-            pixel_dist = np.sqrt( (bbox_cx - dist_cx)**2 + (bbox_cy - dist_cy)**2 )
+            pixel_dist = np.sqrt( (bbox_cx - dist_cx)**2 + (bbox_cy - dist_cy)** 2 )
             if pixel_dist < self.match_threshold and pixel_dist < min_dist_pixel:
                 min_dist_pixel = pixel_dist
                 matched_data = (dist, x, y, z)
@@ -100,38 +96,30 @@ class ObjectDetectionNode(Node):
                 bbox_cy = round( (y1 + y2) / 2.0 )
                 centers.append([bbox_cx, bbox_cy])
 
-                # 绘制识别框和中心点（不变）
                 cv2.rectangle(cv_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 4)
                 cv2.circle(cv_img, (bbox_cx, bbox_cy), 5, (0, 0, 255), -1)
 
-                # 【核心修改4：匹配距离+三维坐标并绘制】
                 matched_data = self.find_matching_dist_xyz(bbox_cx, bbox_cy)
                 if matched_data is not None:
                     matched_count += 1
                     distance, x, y, z = matched_data
-                    # 绘制文本：距离在上，三维坐标在下（黑底黄字，避免遮挡）
                     text_dist = f"Dist: {distance:.2f}m"
                     text_xyz = f"XYZ: ({x:.3f}, {y:.3f}, {z:.3f})"
                     text_x = int(x1) + 10
-                    # 距离文本位置（识别框左上角上方）
                     text_y_dist = int(y1) - 20 if int(y1) - 20 > 20 else int(y2) + 30
-                    # 坐标文本位置（距离文本下方，间距10像素）
                     text_y_xyz = text_y_dist + 30
 
-                    # 绘制距离文本背景板
                     (w1, h1), _ = cv2.getTextSize(text_dist, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)
                     cv2.rectangle(
                         cv_img, (text_x - 5, text_y_dist - h1 - 5),
                         (text_x + w1 + 5, text_y_dist + 5), (0, 0, 0), -1
                     )
-                    # 绘制坐标文本背景板（更宽，适配XYZ格式）
                     (w2, h2), _ = cv2.getTextSize(text_xyz, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
                     cv2.rectangle(
                         cv_img, (text_x - 5, text_y_xyz - h2 - 5),
                         (text_x + w2 + 5, text_y_xyz + 5), (0, 0, 0), -1
                     )
 
-                    # 绘制文本（距离用黄色，坐标用青色，区分功能）
                     cv2.putText(
                         cv_img, text_dist, (text_x, text_y_dist),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3
@@ -141,34 +129,39 @@ class ObjectDetectionNode(Node):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2
                     )
 
-                # 构建识别框数据（不变）
                 size_x = x2 - x1
                 size_y = y2 - y1
                 bbox_data = f"{(x1+x2)/2.0:.2f},{(y1+y2)/2.0:.2f},{size_x:.2f},{size_y:.2f}"
                 bbox_data_list.append(bbox_data)
 
-        # 发布识别框数据（不变）
         if bbox_data_list:
             self.bbox_data_pub.publish(String(data=";".join(bbox_data_list)))
 
-        # 绘制拟合线（不变）
+        # 【核心优化：拟合线优先竖直（仅修改这部分，其他不变）】
         if len(centers) >= 2:
             centers_np = np.array(centers, dtype=np.float32)
-            x = centers_np[:, 0]
-            y = centers_np[:, 1]
-            try:
-                k, b = np.polyfit(x, y, 1)
-            except:
-                k = (y[-1] - y[0]) / (x[-1] - x[0]) if x[-1] != x[0] else 0.0
-                b = y[0] - k * x[0]
-            x_start, x_end = 0.0, float(img_w)
-            y_start = k * x_start + b
-            y_end = k * x_end + b
-            cv2.line(cv_img, (int(x_start), int(y_start)), (int(x_end), int(y_end)), (0, 0, 255), 3)
+            x_coords = centers_np[:, 0]  # 所有中心点的x坐标
+            # 关键：取x坐标的平均值作为竖直直线的固定x值（保证尽量竖直）
+            cx_mean = np.mean(x_coords)
+            # 限制x值在图像范围内（避免极端情况）
+            cx_mean = np.clip(cx_mean, 50, img_w - 50)
+            
+            # 绘制竖直拟合线（贯穿全图，和原版视觉一致）
+            cv2.line(cv_img, (int(cx_mean), 0), (int(cx_mean), img_h), (0, 0, 255), 3)
 
-        # 发布带叠加的图像（不变）
+            # 【新增：发布中心区域的两个竖直点（供点云使用）】
+            margin_ratio = 0.4  # 40%边缘留白，取y轴中心区域
+            y_pub_start = img_h * margin_ratio  # 中心区域起点y（图像40%处）
+            y_pub_end = img_h * (1 - margin_ratio)  # 中心区域终点y（图像60%处）
+            # 竖直直线x坐标固定为cx_mean，y取中心区域
+            line_data = f"{cx_mean:.2f},{y_pub_start:.2f},{cx_mean:.2f},{y_pub_end:.2f}"
+            self.center_line_pub.publish(String(data=line_data))
+            self.get_logger().debug(f"📤 发布竖直中心线点：{line_data}")
+        else:
+            # 目标不足时发布空消息
+            self.center_line_pub.publish(String(data=""))
+
         self.overlay_pub.publish(self.bridge.cv2_to_imgmsg(cv_img, "bgr8"))
-        # 打印匹配统计（新增坐标匹配信息）
         self.get_logger().info(
             f"📊 检测到 {len(centers)} 个目标 | 匹配到 {matched_count} 个（距离+坐标）数据", 
             throttle_duration_sec=1
