@@ -48,10 +48,11 @@ class ObjectAssociationNode(Node):
         self.pub_fused_image = self.create_publisher(Image, "/fused_image_with_supplement", 10)
         self.pub_association = self.create_publisher(String, "/bbox_association_result", 10)
 
-        # ---------------------- 3. 数据缓存（完全不变）----------------------
+        # ---------------------- 3. 数据缓存（新增：雷达框ID→三维坐标缓存）----------------------
         self.cv_image = None
         self.visual_bboxes = []  # [(cx, cy, w, h), ...]（像素）
         self.lidar_bboxes = []  # [(id, x, y, z, l, w, h), ...]（雷达系，米）
+        self.lidar_id_xyz_cache = {}  # 新增：key=lidar_id, value=(x,y,z) 三维坐标缓存
         self.bridge = CvBridge()
         self.get_logger().info("Python association node started!")  # 去掉中文
 
@@ -107,24 +108,25 @@ class ObjectAssociationNode(Node):
             except:
                 self.get_logger().warn(f"Invalid visual bbox format: {bbox_str}")
 
+    # ---------------------- 核心修改1：雷达框回调中缓存ID→三维坐标 ----------------------
     def lidar_bbox_cb(self, msg):
         self.lidar_bboxes.clear()
+        self.lidar_id_xyz_cache.clear()  # 清空旧缓存，同步更新新数据
         for marker in msg.markers:
             if marker.type == 1 and marker.action == 0:
                 if marker.scale.x <= 0 or marker.scale.y <=0 or marker.scale.z <=0:
                     self.get_logger().warn(f"Invalid lidar bbox size: ID={marker.id}")
                     continue
-                self.lidar_bboxes.append( (
-                    marker.id,
-                    marker.pose.position.x,
-                    marker.pose.position.y,
-                    marker.pose.position.z,
-                    marker.scale.x,
-                    marker.scale.y,
-                    marker.scale.z
-                ))
+                # 解析雷达框基础信息（原有逻辑不变）
+                lidar_id = marker.id
+                x = marker.pose.position.x
+                y = marker.pose.position.y
+                z = marker.pose.position.z
+                self.lidar_bboxes.append( (lidar_id, x, y, z, marker.scale.x, marker.scale.y, marker.scale.z) )
+                # 新增：缓存当前雷达框的三维坐标（ID映射）
+                self.lidar_id_xyz_cache[lidar_id] = (x, y, z)
 
-    # ---------------------- 核心修改：彻底删除所有中文，全部用英文 ----------------------
+    # ---------------------- 核心修改2：加大字体+优化行间距 ----------------------
     def image_cb(self, msg):
         try:
             self.cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -132,10 +134,11 @@ class ObjectAssociationNode(Node):
             self.get_logger().error(f"Image conversion failed: {str(e)}")
             return
 
-        # 无框时显示英文提示（无中文）
+        # 无框时显示英文提示（字体加大）
         if not self.visual_bboxes and not self.lidar_bboxes:
             fused_img = self.cv_image.copy()
-            cv2.putText(fused_img, "No Detection", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
+            # 字体加大：fontScale=1.2，thickness=3
+            cv2.putText(fused_img, "No Detection", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255,0,0), 3)
             self.pub_fused_image.publish(self.bridge.cv2_to_imgmsg(fused_img, "bgr8"))
             return
 
@@ -164,12 +167,12 @@ class ObjectAssociationNode(Node):
                 matched_vis_idx.add(vis_idx)
                 matched_lidar_ids.add(best_lidar_id)
 
-        # 绘制结果（仅修改文本为英文）
+        # 绘制结果（核心调整：字体加大+行间距优化）
         fused_img = self.cv_image.copy()
         img_h, img_w = fused_img.shape[:2]
 
-        # 1. 匹配成功的视觉框（绿色，纯英文文本）
-        for vis_idx in matched_vis_idx:
+        # 1. 匹配成功的视觉框（绿色，字体加大到0.7，粗细2）
+        for (vis_idx, lidar_id, iou) in assoc_results:
             try:
                 cx, cy, w, h = self.visual_bboxes[vis_idx]
                 x1 = int(max(0, cx - w/2))
@@ -178,15 +181,24 @@ class ObjectAssociationNode(Node):
                 y2 = int(min(img_h-1, cy + h/2))
                 if x1 >= x2 or y1 >= y2:
                     continue
-                cv2.rectangle(fused_img, (x1,y1), (x2,y2), (0,255,0), 2)
-                # 中文→英文："匹配(Vis-{vis_idx})" → "Matched(Vis-{vis_idx})"
-                label = f"Matched(Vis-{vis_idx})"
-                cv2.putText(fused_img, label, (x1, max(10, y1-5)), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+                # 边框加粗（从2→3）
+                cv2.rectangle(fused_img, (x1,y1), (x2,y2), (0,255,0), 3)
+                # 从缓存获取三维坐标
+                xyz = self.lidar_id_xyz_cache.get(lidar_id, (-1.0, -1.0, -1.0))
+                x, y, z = xyz
+                # 字体调整：fontScale=0.7，thickness=2；行间距加大到30像素
+                label = f"Matched(Vis-{vis_idx}, Lidar-{lidar_id})"
+                xyz_text = f"XYZ: ({x:.2f}, {y:.2f}, {z:.2f})" if x != -1.0 else "XYZ: No Data"
+                # 第一行：匹配标识
+                cv2.putText(fused_img, label, (x1, max(20, y1-10)), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+                # 第二行：三维坐标（行间距30）
+                cv2.putText(fused_img, xyz_text, (x1, max(20, y1-40)), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
             except Exception as e:
-                self.get_logger().warn(f"Draw visual bbox failed: {str(e)}")
+                self.get_logger().warn(f"Draw matched bbox failed: {str(e)}")
 
-        # 2. 点云漏检框（红色，纯英文文本）
+        # 2. 点云漏检框（红色，字体加大到0.7，粗细2）
         for (lidar_id, lidar_cx, lidar_cy, lidar_w, lidar_h, x_l, y_l, z_l) in lidar_pixel_boxes:
             if lidar_id not in matched_lidar_ids:
                 try:
@@ -196,17 +208,26 @@ class ObjectAssociationNode(Node):
                     y2 = int(min(img_h-1, lidar_cy + lidar_h/2))
                     if x1 >= x2 or y1 >= y2:
                         continue
-                    cv2.rectangle(fused_img, (x1,y1), (x2,y2), (0,0,255), 2)
-                    # 计算距离（处理异常）
-                    distance = np.sqrt(x_l**2 + y_l**2 + z_l**2)
-                    if np.isnan(distance) or np.isinf(distance):
-                        distance_text = "Dist:Unknown"
-                    else:
-                        distance_text = f"Dist:{round(distance, 2)}m"
-                    # 中文→英文："点云补充({distance_str})" → "Lidar-Supplement({distance_text})"
-                    label = f"Lidar-Supplement({distance_text})"
-                    cv2.putText(fused_img, label, (x1, max(10, y1-5)), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                    # 边框加粗（从2→3）
+                    cv2.rectangle(fused_img, (x1,y1), (x2,y2), (0,0,255), 3)
+                    # 从缓存获取三维坐标
+                    xyz = self.lidar_id_xyz_cache.get(lidar_id, (-1.0, -1.0, -1.0))
+                    x, y, z = xyz
+                    # 计算距离
+                    distance = np.sqrt(x**2 + y**2 + z**2) if x != -1.0 else np.nan
+                    distance_text = f"Dist: {distance:.2f}m" if not np.isnan(distance) else "Dist: Unknown"
+                    xyz_text = f"XYZ: ({x:.2f}, {y:.2f}, {z:.2f})" if x != -1.0 else "XYZ: No Data"
+                    # 字体调整：fontScale=0.7，thickness=2；行间距加大到30像素
+                    label = f"Lidar-Supplement(ID-{lidar_id})"
+                    # 第一行：漏检标识
+                    cv2.putText(fused_img, label, (x1, max(20, y1-10)), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+                    # 第二行：距离（行间距30）
+                    cv2.putText(fused_img, distance_text, (x1, max(20, y1-40)), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+                    # 第三行：三维坐标（行间距30）
+                    cv2.putText(fused_img, xyz_text, (x1, max(20, y1-70)), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
                 except Exception as e:
                     self.get_logger().warn(f"Draw lidar bbox failed: {str(e)}")
 

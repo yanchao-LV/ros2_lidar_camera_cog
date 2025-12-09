@@ -49,6 +49,7 @@ class SeedlingClusterNode(Node):
         self.get_logger().info('✅ 菜苗聚类+包围框节点启动成功！')
         self.get_logger().info(f'🌱 聚类参数：eps={self.dbscan_eps}m, min_samples={self.dbscan_min_samples}')
         self.get_logger().info(f'📦 包围框类型：{self.bbox_type.upper()}')
+        self.get_logger().info(f'📍 已启用：包围框嵌入中心三维坐标（pose.position + text字段）')
 
     def callback(self, msg):
         try:
@@ -96,7 +97,7 @@ class SeedlingClusterNode(Node):
             if len(clean_seedling_np) == 0:
                 return
             
-            # -------------------------- 第三步：生成包围框（3D/2D）【核心修复】 --------------------------
+            # -------------------------- 第三步：生成包围框（3D/2D）【核心修改：嵌入三维坐标】 --------------------------
             marker_array = MarkerArray()
             colors = self.get_distinct_colors(num_clusters)  # 不同菜苗不同颜色
             
@@ -104,12 +105,17 @@ class SeedlingClusterNode(Node):
                 # 提取当前簇的点云
                 cluster_points = seedling_np[labels == cluster_id]
                 
-                # 计算包围框参数
+                # 【关键修改1：计算聚类簇的平均三维坐标（中心坐标）】
+                avg_x = np.mean(cluster_points[:, 0])  # 簇内所有点x的平均值
+                avg_y = np.mean(cluster_points[:, 1])  # 簇内所有点y的平均值
+                avg_z = np.mean(cluster_points[:, 2])  # 簇内所有点z的平均值
+                
+                # 计算包围框参数（原有逻辑不变）
                 if self.bbox_type == '3d':
                     # 三维包围框：min/max x/y/z
                     bbox_min = np.min(cluster_points, axis=0)  # [x_min, y_min, z_min]
                     bbox_max = np.max(cluster_points, axis=0)  # [x_max, y_max, z_max]
-                    center = (bbox_min + bbox_max) / 2  # 包围框中心
+                    bbox_center = (bbox_min + bbox_max) / 2  # 包围框几何中心（仅用于框的位置）
                     scale = bbox_max - bbox_min  # 包围框尺寸（长×宽×高）
                 else:
                     # 二维包围框（y-z平面）：忽略x，只算y/z范围
@@ -118,39 +124,47 @@ class SeedlingClusterNode(Node):
                     bbox_min_z = np.min(cluster_points[:, 2])
                     bbox_max_z = np.max(cluster_points[:, 2])
                     # 三维Marker适配2D：x取菜苗平均x，厚度设为0.01m
-                    center = [np.mean(cluster_points[:, 0]), (bbox_min_y + bbox_max_y)/2, (bbox_min_z + bbox_max_z)/2]
+                    bbox_center = [avg_x, (bbox_min_y + bbox_max_y)/2, (bbox_min_z + bbox_max_z)/2]
                     scale = [0.01, bbox_max_y - bbox_min_y, bbox_max_z - bbox_min_z]
                 
-                # 创建包围框Marker（RViz可显示）【修复：加float()转换】
+                # 创建包围框Marker（RViz可显示）
                 marker = Marker()
-                marker.header = msg.header  # 同点云坐标系
-                marker.id = cluster_id  # 每个簇唯一ID
+                marker.header = msg.header  # 同点云坐标系（雷达坐标系）
+                marker.id = cluster_id  # 每个簇唯一ID（用于后续object_association匹配）
                 marker.type = Marker.CUBE  # 立方体包围框
                 marker.action = Marker.ADD
-                # 核心修复：将numpy float转为Python原生float
-                marker.pose.position.x = float(center[0])
-                marker.pose.position.y = float(center[1])
-                marker.pose.position.z = float(center[2])
-                # 姿态：默认无旋转（Quaternion(0,0,0,1)）
+                
+                # 【关键修改2：将平均三维坐标存入pose.position（核心供后续读取）】
+                marker.pose.position.x = float(avg_x)  # 簇中心x坐标
+                marker.pose.position.y = float(avg_y)  # 簇中心y坐标
+                marker.pose.position.z = float(avg_z)  # 簇中心z坐标
+                
+                # 姿态：默认无旋转（Quaternion(0,0,0,1)）（原有逻辑不变）
                 marker.pose.orientation.x = 0.0
                 marker.pose.orientation.y = 0.0
                 marker.pose.orientation.z = 0.0
                 marker.pose.orientation.w = 1.0
-                # 尺寸（同样加float()，避免潜在问题）
+                
+                # 尺寸（原有逻辑不变，加float()避免潜在问题）
                 marker.scale.x = float(scale[0])
                 marker.scale.y = float(scale[1])
                 marker.scale.z = float(scale[2])
-                # 颜色（半透明，不遮挡点云）
+                
+                # 颜色（半透明，不遮挡点云）（原有逻辑不变）
                 marker.color.r = float(colors[cluster_id][0])
                 marker.color.g = float(colors[cluster_id][1])
                 marker.color.b = float(colors[cluster_id][2])
                 marker.color.a = 0.5  # 透明度0.5
-                # 生命周期（0=永久，直到节点停止）
+                
+                # 【关键修改3：在text字段显式存储XYZ（方便调试，可选但推荐）】
+                marker.text = f"XYZ:({avg_x:.2f},{avg_y:.2f},{avg_z:.2f})"
+                
+                # 生命周期（0=永久，直到节点停止）（原有逻辑不变）
                 marker.lifetime.sec = 0
                 
                 marker_array.markers.append(marker)
             
-            # -------------------------- 第四步：发布数据 --------------------------
+            # -------------------------- 第四步：发布数据（原有逻辑不变） --------------------------
             # 发布过滤+去噪后的菜苗点云
             pc_msg = PointCloud2()
             pc_msg.header = msg.header
@@ -163,7 +177,7 @@ class SeedlingClusterNode(Node):
             pc_msg.is_dense = True
             self.pub_pc.publish(pc_msg)
             
-            # 发布包围框（修复后无类型错误）
+            # 发布包围框（含三维坐标信息）
             self.pub_bbox.publish(marker_array)
             
         except Exception as e:
